@@ -1,0 +1,211 @@
+---
+title: "San Nicolas Dive Planning"
+author: "Kevin L. Stierhoff"
+date: '`r format(Sys.time(), "%d %B %Y")`'
+output:
+  html_document:
+    toc: yes
+  html_notebook:
+    toc: yes
+---
+
+# Overview
+The goal of this exercise is to automatically generate baseline and perpindicular transects from a set of sites with the start position (latitude, longitude), bearing, and length. The sampling design was developed by Dave Witting. In brief, a baseline transect 100-m long was placed to occur in rocky habitat at various locations around San Nicolas Island. Perpendicular transects, 50-m in length, were then placed at 6-m intervals, beginning at the 3-m mark, and extending to the end of the transect (a total of 17 50-m transects along a baseline transect 100-m long).  
+
+![](../Figs/sampling_design.png)
+
+# Load libraries and set-up document
+
+```{r LoadLibraries,echo=FALSE,message=FALSE,error=FALSE}
+rm(list=ls())
+# Load libraries
+suppressPackageStartupMessages(library(ggplot2));library(pander);library(swfscMisc);library(sp);
+library(lubridate); library(plyr);library(knitr);library(lubridate);library(xlsx);library(rgdal);
+library(ggmap);library(plotKML);library(raster);
+# set system time zone to GMT
+Sys.setenv(tz = "GMT")
+# determines method of table generation (whether pander or xtable) for best formatting
+doc.type <-knitr::opts_knit$get('rmarkdown.pandoc.to')
+# global knitr chunk options
+knitr::opts_chunk$set(warning=FALSE, message=FALSE,fig.align='center')
+# global pander options
+panderOptions('table.style','rmarkdown'); panderOptions('table.split.table', Inf); panderOptions('digits', 6);
+panderOptions('round', 6); panderOptions('keep.trailing.zeros', TRUE); panderOptions('missing', "")
+```
+
+```{r GetMapData}
+# Download maps?
+download.maps <- FALSE # download new maps, or use existing
+# load or download  USA level 1(state) map from ucdavis site
+usa1 <- getData("GADM", country="USA",download=download.maps,level=1,path = '../GIS/') 
+# extract US state shapefiles
+ca1 <- (usa1[usa1$NAME_1=="California",]) # only CA
+# load site map extent data, for mapping
+load("../Data/site_map_extent.Rdata")
+```
+
+# Set location and import site information
+
+```{r LoadSiteData}
+# Center of SNI
+sni.lat <- 33.245450
+sni.lon <- -119.499169
+# Read dive site info from Excel file
+# sites <- read.xlsx("../Data/sni_sites_demo.xlsx",sheetName = "sites")
+sites <- read.xlsx("../Data/sni_sites.xlsx",sheetName = "sites")
+# Create placeholders for destination data
+sites$lat_end <- NA
+sites$lon_end <- NA
+```
+
+# Create baseline transects
+
+```{r ComputeBaselineDestinations}
+# Calculate the destination from the origin
+for(i in 1:nrow(sites)){
+  # calculate the baseline endpionts
+  temp.starts <- destination(sites$lat_start[i],sites$lon_start[i],brng = sites$base_brng[i],distance = sites$base_distance[i],units = "km")
+  sites$lat_end[i] <- temp.starts[grep("lat",names(temp.starts))]
+  sites$lon_end[i] <- temp.starts[grep("lon",names(temp.starts))]
+}
+# Write results to text file
+write.csv(sites,file = "../Output/site_info_R.csv",quote=FALSE,row.names=FALSE)
+
+base.tx.starts <- sites[,c("name","lat_start","lon_start")]
+base.tx.starts$location <- as.factor("Start")
+names(base.tx.starts) <- c("name","lat","lon","location")
+base.tx.ends <- sites[,c("name","lat_end","lon_end")]
+base.tx.ends$location <- as.factor("End")
+names(base.tx.ends) <- c("name","lat","lon","location")
+
+base.tx.wpts <- rbind(base.tx.starts,base.tx.ends)
+
+base.tx.wpts$key <- paste(base.tx.wpts$name,base.tx.wpts$location)
+write.csv(base.tx.wpts,file = "../Output/sni_base_tx_wpts.csv",quote = FALSE,row.names = FALSE)
+
+# create spatial points data frame
+base.tx.shp <- base.tx.wpts
+# define coordinates
+coordinates(base.tx.shp)<-~lon+lat
+proj4string(base.tx.shp) <- CRS("+init=epsg:4326")
+
+# write baseline transect waypoint to shapefile
+writeOGR(base.tx.shp, "../GIS", "base_tx_wpts", driver = "ESRI Shapefile",overwrite_layer=TRUE)
+```
+
+# Create perpindicular transects from baseline transects
+
+```{r ComputePerpendicularTransects}
+# Define the transect interval along the baseline transect
+tx.interval <- seq(0.003,0.099,0.006) # Start position, end position, and interval
+# Create a data frame for results
+perp.tx.wpts <- data.frame()
+for(i in 1:nrow(sites)){
+  # calculate perpindicular transect start locations for baseline transect i
+  temp.starts <-destination(sites$lat_start[i],sites$lon_start[i],brng = sites$base_brng[i],distance = tx.interval,units = "km")
+  # assemble into a data frame and format
+  perp.tx.starts <- data.frame(temp.starts[grep("lat",names(temp.starts))],temp.starts[grep("lon",names(temp.starts))])
+  names(perp.tx.starts) <- c("lat","lon")
+  perp.tx.starts$location <- as.factor("Start")
+  perp.tx.starts$position <- as.factor(paste("T",tx.interval*1000,sep=""))
+  # calculate perpindicular transect end locations for baseline transect i  
+  temp.ends <- destination(perp.tx.starts$lat,perp.tx.starts$lon,brng = sites$base_brng[i] - sites$perp_bearing[i],distance = sites$perp_distance[i],units = "km")
+  # assemble into a data frame and format    
+  perp.tx.ends <- data.frame(temp.ends[grep("lat",names(temp.ends))],temp.ends[grep("lon",names(temp.ends))])
+  names(perp.tx.ends) <- c("lat","lon")
+  perp.tx.ends$location <- as.factor("End")
+  perp.tx.ends$position <- as.factor(paste("T",tx.interval*1000,sep=""))
+  # combine start and end locations for base transect i
+  perp.tx.wpts.temp <- rbind(perp.tx.starts,perp.tx.ends)
+  # add the site name
+  perp.tx.wpts.temp$name <- sites$name[i]
+  perp.tx.wpts.temp$region <- sites$region[i]
+  # create a key from the site name and position along the baseline transect
+  perp.tx.wpts.temp$key <- paste(perp.tx.wpts.temp$name,perp.tx.wpts.temp$position)
+  # combine with previous results
+  perp.tx.wpts <- rbind(perp.tx.wpts,perp.tx.wpts.temp)
+}
+row.names(perp.tx.wpts) <- NULL
+# write results to CSV file
+write.csv(perp.tx.wpts,file="../Output/sni_perp_tx_wpts.csv",quote = FALSE,row.names = FALSE)
+
+# create spatial points data frame
+perp.tx.shp <- perp.tx.wpts
+# define coordinates
+coordinates(perp.tx.shp)<-~lon+lat
+proj4string(perp.tx.shp) <- CRS("+init=epsg:4326")
+
+# write baseline transect waypoint to shapefile
+writeOGR(perp.tx.shp, "../GIS", "perp_tx_wpts", driver = "ESRI Shapefile",overwrite_layer=TRUE)
+# ggplot() +  geom_point(data = perp.tx.starts,aes(lon,lat),colour = 'green') + 
+#   geom_point(data = perp.tx.ends,aes(lon,lat),colour = 'red') + 
+#   geom_path(data = perp.tx.wpts,aes(lon,lat,group = position))
+#   coord_map()
+```  
+
+# Location of baseline transects around San Nicolas Is.
+
+```{r CreatePaths,fig.height=8,fig.width=8}
+# Create a df for the baseline transect paths
+base.path.starts <- sites[ ,c("name","region","lat_start","lon_start")]
+base.path.ends <- sites[ ,c("name","region","lat_end","lon_end")]
+names(base.path.starts) <- c("name","region","lat","lon")
+names(base.path.ends) <- c("name","region","lat","lon")
+base.paths <- rbind(base.path.starts,base.path.ends)
+```
+
+# Plot baseline transects around San Nicolas Is.
+
+```{r PlotBaselineTransects,fig.width=8,fig.height=8}
+# Plot baseline transect points and paths
+ggplot() +
+  geom_polygon(data=ca1, aes(long,lat,group=group),colour="grey10",fill="grey70") +
+  geom_point(data = sites,aes(lon_start,lat_start),colour = 'green') +
+  geom_point(data = sites,aes(lon_end,lat_end),colour = 'red') +
+  geom_path(data=base.paths,aes(x=lon,y=lat,group=name)) +
+  xlab("\nLongitude (W)") + ylab("Latitude (N)\n") +
+  theme_bw() + theme(plot.background=element_blank(),
+                     panel.margin=unit(1, "lines")) +
+  coord_map(xlim=range(site.map.extent$lon),ylim=range(site.map.extent$lat))
+```
+
+# Plot baseline and perpendicular transects by Region
+**Note:** plots are not in a geographic coordinate system, so spatial accuracy is not to be expected. This is just for visualization to see the code is doing what is expected.
+
+```{r PlotPerpsFacet,fig.width=8,fig.height=8}
+# Plot points and paths
+ggplot() +
+  # geom_polygon(data=ca1, aes(long,lat,group=group),colour="grey10",fill="grey70") +
+  geom_point(data = sites,aes(lon_start,lat_start),colour = 'green') +
+  geom_point(data = sites,aes(lon_end,lat_end),colour = 'red') +
+  geom_path(data=perp.tx.wpts,aes(x=lon,y=lat,group=key)) +
+  # geom_text(data = sites,aes(lon_start,lat_start,label = name,hjust = 0, nudge_x = 0.005,angle = 45)) +
+  facet_wrap(~region,scales = "free") +
+  xlab("\nLongitude (W)") + ylab("Latitude (N)\n") +
+  # xlim(range(site.map.extent$lon)) + ylim(range(site.map.extent$lat)) +
+  theme_bw() + theme(plot.background=element_blank(),
+                     # axis.text.y = element_text(angle = 90, hjust=0.5),
+                     panel.margin=unit(1, "lines"))
+```
+
+# Convert points to lines in GIS (if desired)
+Using the Points to Line tool in ArcGIS, convert the baseline and perpindicular transect waypoints to lines.
+
+![](../Figs/Points2Lines-Tool.PNG)
+
+## Convert baseline transect waypoints to lines
+When converting the baseline transects, use the following options, taking particular care with the Line Field choice (**name**, in this case).
+
+![](../Figs/Points2LinesInputs-Baseline.PNG)
+
+## Convert perpenducular transect waypoints to lines
+When converting the perpendicular transects, use the following options, taking particular care with the Line Field choice (**key**, in this case).
+
+![](../Figs/Points2LinesInputs-Perps.PNG)
+
+## Add line layers to GIS
+When added to ArcGIS, the baseline and perpendicular transects should look something like this.  
+
+![](../Figs/GISexample.PNG) 
+
+# End of document
