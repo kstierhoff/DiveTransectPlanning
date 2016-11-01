@@ -8,19 +8,26 @@ output:
   html_document:
     toc: yes
 ---
-
 # Overview
 The goal of this exercise is to automatically generate baseline and perpindicular transects from a set of sites with the start position (latitude, longitude), bearing, and length. The sampling design was developed by Dave Witting. In brief, a baseline transect 100-m long was placed to occur in rocky habitat at various locations around San Nicolas Island. Perpendicular transects, 50-m in length, were then placed at 6-m intervals, beginning at the 3-m mark, and extending to the end of the transect (a total of 17 50-m transects along a baseline transect 100-m long).  
 
 ![](../Figs/sampling_design.png)
 
 # Load libraries and set-up document
-```{r LoadLibraries,echo=FALSE,message=FALSE,error=FALSE}
+```{r LoadLibraries, echo=FALSE, error=FALSE, message=FALSE, warning=FALSE}
 rm(list=ls())
-# Load libraries
-suppressPackageStartupMessages(library(ggplot2));library(pander);library(swfscMisc);library(sp);
-library(lubridate); library(plyr);library(knitr);library(lubridate);library(xlsx);library(rgdal);
-library(ggmap);library(raster);library(leaflet);library(maps);library(maptools);
+# List packages required to run the script
+pkgs <- c("ggplot2","pander","swfscMisc","sp","lubridate","plyr",
+          "knitr","xlsx","rgdal","ggmap","raster","leaflet","maps","maptools")
+# Install and load all packages provided from a character vector
+load_pkgs = function(pkgs){
+  new_pkgs = pkgs[!(pkgs %in% installed.packages()[ ,'Package'])]
+  if(length(new_pkgs) > 0) install.packages(new_pkgs)
+  invisible(lapply(pkgs,function(x)
+    suppressPackageStartupMessages(library(x,character.only=TRUE))))
+}
+# Load packages
+load_pkgs(pkgs)
 # set system time zone to GMT
 Sys.setenv(tz = "GMT")
 # global knitr chunk options
