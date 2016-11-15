@@ -3,13 +3,17 @@ title: "San Nicolas Dive Planning"
 author: "Kevin L. Stierhoff"
 date: '`r format(Sys.time(), "%d %B %Y")`'
 output:
-  html_notebook:
-    toc: yes
   html_document:
+    toc: yes
+  html_notebook:
     toc: yes
 ---
 # Overview
 The goal of this exercise is to automatically generate baseline and perpindicular transects from a set of sites with the start position (latitude, longitude), bearing, and length. The sampling design was developed by Dave Witting. In brief, a baseline transect 100-m long was placed to occur in rocky habitat at various locations around San Nicolas Island. Perpendicular transects, 50-m in length, were then placed at 6-m intervals, beginning at the 3-m mark, and extending to the end of the transect (a total of 17 50-m transects along a baseline transect 100-m long).  
+
+This tool takes user input from an Excel (.xlsx) file to create the baseline transects, then create perpindicular transects along the length of the baseline transect. The Excel file has information on the 1) start location (latitude/longitude; decimal degrees), bearing (compass heading, degrees), and desired length (km) of each baseline transect, and the 2) bearing (typically -90/90; degrees), start location along the baseline transect (km), and desired spacing (km). 
+
+The tool produces comma-delimited text files (.csv) and GIS shapefiles (.shp) containing the start and end locations of the baseline and perpendicular transects. 
 
 ![](../Figs/sampling_design.png)
 
@@ -38,10 +42,6 @@ panderOptions('round', 6); panderOptions('keep.trailing.zeros', TRUE); panderOpt
 ```
 
 ```{r UserInput}
-# Where should perpindicular transects begin along the baseline transect (km; 0.003 = 3 m)
-perp.spacing.start <- 0.003
-# What should the spacing of the transects be (km; 0.006 = 6 m)
-perp.spacing <- 0.006
 # Select tile to use for Leaflet map
 # Some good options include CartoDB.Positron, Stamen.Terrain, Esri.WorldImagery
 leaflet.tile <- "Stamen.Terrain" 
@@ -124,7 +124,7 @@ baseline.lines <- points2line(data = base.tx.wpts,
 # create spatial points data frame
 base.tx.shp <- base.tx.wpts
 # define coordinates
-coordinates(base.tx.shp)<-~lon+lat
+coordinates(base.tx.shp) <- ~lon+lat
 proj4string(base.tx.shp) <- CRS("+init=epsg:4326")
 
 # write baseline transect waypoint to shapefile
@@ -139,7 +139,7 @@ perp.tx.wpts <- data.frame()
 for(i in 1:nrow(sites)){
   # Define the transect interval along the baseline transect
    # Start position, end position, and interval, based on user input regarding spacing and baseline transect length
-  tx.interval <- seq(perp.spacing.start,sites$base_distance[i],perp.spacing)
+  tx.interval <- seq(sites$perp_start[i],sites$base_distance[i],sites$perp_spacing[i])
   # calculate perpindicular transect start locations for baseline transect i
   temp.starts <-destination(sites$lat_start[i],sites$lon_start[i],brng = sites$base_brng[i],distance = tx.interval,units = "km")
   # assemble into a data frame and format
